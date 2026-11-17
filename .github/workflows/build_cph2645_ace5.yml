@@ -1,22 +1,18 @@
-name: OnePlus Ace 5 CPH2645 KernelSU-Next SUSFS
+name: Build Ace 5 GKI Kernel
 
 on:
   workflow_dispatch:
     inputs:
-      device:
-        description: "Device identifier"
-        required: true
-        default: "ace5"
-      android_version:
-        description: "Android version"
-        required: true
-        default: "15"
-      gki_branch:
-        description: "GKI kernel branch"
+      kernel_family:
+        description: "GKI kernel family"
         required: true
         default: "android15-6.1"
-      ksu_variant:
-        description: "KernelSU variant"
+      patch_level:
+        description: "GKI patch level"
+        required: true
+        default: "2025-11"
+      root_impl:
+        description: "Root implementation"
         required: true
         default: "KernelSU-Next"
         type: choice
@@ -36,7 +32,7 @@ on:
           - "true"
           - "false"
       enable_docker:
-        description: "Enable Docker / container features"
+        description: "Enable Docker / DroidSpaces"
         required: true
         default: "true"
         type: choice
@@ -44,7 +40,7 @@ on:
           - "true"
           - "false"
       enable_storage:
-        description: "Enable USB storage / NTFS / CIFS / FUSE"
+        description: "Enable CIFS / FUSE / NTFS / USB storage"
         required: true
         default: "true"
         type: choice
@@ -54,7 +50,7 @@ on:
 
 jobs:
   build:
-    name: CPH2645 Build
+    name: GKI Build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -63,82 +59,70 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Clone WildKernels build source
+      - name: Clone WildKernels GKI repo
         run: |
           git clone --depth=1 \
             https://github.com/WildKernels/OnePlus_KernelSU_SUSFS.git wk
 
-      - name: Detect build entrypoint
-        id: entry
+      - name: Trigger repo build workflow
         run: |
           set -euo pipefail
-          ENTRY=""
 
-          if [ -f wk/build.sh ]; then
-            ENTRY="wk/build.sh"
-          elif [ -f wk/scripts/build.sh ]; then
-            ENTRY="wk/scripts/build.sh"
-          elif [ -f wk/tools/build.sh ]; then
-            ENTRY="wk/tools/build.sh"
-          fi
+          cd wk
 
-          if [ -z "$ENTRY" ]; then
-            echo "::error::No build.sh found in WildKernels repo."
-            echo "Check whether the repo structure has changed."
+          WF=$(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | head -n1)
+
+          if [ -z "$WF" ]; then
+            echo "::error::No workflow found in WildKernels repo."
             exit 1
           fi
 
-          echo "entry=$ENTRY" >> "$GITHUB_OUTPUT"
+          echo "Workflow file: $WF"
 
-      - name: Build kernel
-        run: |
-          set -euo pipefail
+          KSU="${{ github.event.inputs.root_impl }}"
+          SUSFS="${{ github.event.inputs.enable_susfs }}"
+          DOCKER="${{ github.event.inputs.enable_docker }}"
+          STORAGE="${{ github.event.inputs.enable_storage }}"
+          FAMILY="${{ github.event.inputs.kernel_family }}"
+          PATCH="${{ github.event.inputs.patch_level }}"
 
-          ENTRY="${{ steps.entry.outputs.entry }}"
-          chmod +x "$ENTRY"
-
-          export DEVICE="${{ github.event.inputs.device }}"
-          export ANDROID_VERSION="${{ github.event.inputs.android_version }}"
-          export GKI_BRANCH="${{ github.event.inputs.gki_branch }}"
-          export KSU_VARIANT="${{ github.event.inputs.ksu_variant }}"
-          export ENABLE_SUSFS="${{ github.event.inputs.enable_susfs }}"
-          export ENABLE_DOCKER="${{ github.event.inputs.enable_docker }}"
-          export ENABLE_STORAGE="${{ github.event.inputs.enable_storage }}"
-
-          echo "Device: $DEVICE"
-          echo "Android: $ANDROID_VERSION"
-          echo "GKI: $GKI_BRANCH"
-          echo "KSU: $KSU_VARIANT"
-          echo "SUSFS: $ENABLE_SUSFS"
-          echo "Docker: $ENABLE_DOCKER"
-          echo "Storage: $ENABLE_STORAGE"
-
-          "$ENTRY"
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p out
-
-          find wk -maxdepth 4 -type f \( \
-            -name '*.zip' -o \
-            -name '*AnyKernel*' -o \
-            -name '*AK3*' -o \
-            -name 'Image' -o \
-            -name '*.img' \
-          \) -exec cp -v {} out/ \; || true
-
-          if [ -z "$(ls -A out/ 2>/dev/null)" ]; then
-            echo "::warning::No kernel artifact found automatically."
-            echo "Upload will include the full build output directory if it exists."
+          if grep -q "kernel_family\|kernel_branch\|gki_branch\|kernel_version" "$WF"; then
+            sed -i "s|default: .*|default: \"$FAMILY\"|" "$WF"
           fi
 
-      - name: Upload artifact
+          if grep -q "patch_level\|android_patch\|gki_patch" "$WF"; then
+            sed -i "s|default: .*|default: \"$PATCH\"|" "$WF"
+          fi
+
+          if grep -q "root_impl\|ksu_variant\|ksu_impl" "$WF"; then
+            sed -i "s|default: .*|default: \"$KSU\"|" "$WF"
+          fi
+
+          if grep -q "enable_susfs\|susfs" "$WF"; then
+            sed -i "s|default: .*|default: \"$SUSFS\"|" "$WF"
+          fi
+
+          if grep -q "enable_docker\|droidspaces\|container" "$WF"; then
+            sed -i "s|default: .*|default: \"$DOCKER\"|" "$WF"
+          fi
+
+          if grep -q "enable_storage\|cifs\|fuse\|ntfs\|usb_storage" "$WF"; then
+            sed -i "s|default: .*|default: \"$STORAGE\"|" "$WF"
+          fi
+
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .github/workflows/
+          git commit -m "ci: set GKI build params" || true
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_Ace5_CPH2645_KernelSU-Next_SUSFS
+          name: GKI_KernelSU_SUSFS
           path: |
-            out/
             wk/out/
             wk/build/
             wk/artifacts/
+            wk/*AnyKernel*.zip
+            wk/*-AK3.zip
           if-no-files-found: warn

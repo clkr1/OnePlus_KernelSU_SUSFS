@@ -1,0 +1,144 @@
+name: OnePlus Ace 5 CPH2645 KernelSU-Next SUSFS
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: "Device identifier"
+        required: true
+        default: "ace5"
+      android_version:
+        description: "Android version"
+        required: true
+        default: "15"
+      gki_branch:
+        description: "GKI kernel branch"
+        required: true
+        default: "android15-6.1"
+      ksu_variant:
+        description: "KernelSU variant"
+        required: true
+        default: "KernelSU-Next"
+        type: choice
+        options:
+          - KernelSU-Next
+          - KernelSU
+          - BakaSU
+          - FinaSU
+          - SukiSU-Ultra
+          - KowSU
+      enable_susfs:
+        description: "Enable SUSFS"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      enable_docker:
+        description: "Enable Docker / container features"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      enable_storage:
+        description: "Enable USB storage / NTFS / CIFS / FUSE"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  build:
+    name: CPH2645 Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone WildKernels build source
+        run: |
+          git clone --depth=1 \
+            https://github.com/WildKernels/OnePlus_KernelSU_SUSFS.git wk
+
+      - name: Detect build entrypoint
+        id: entry
+        run: |
+          set -euo pipefail
+          ENTRY=""
+
+          if [ -f wk/build.sh ]; then
+            ENTRY="wk/build.sh"
+          elif [ -f wk/scripts/build.sh ]; then
+            ENTRY="wk/scripts/build.sh"
+          elif [ -f wk/tools/build.sh ]; then
+            ENTRY="wk/tools/build.sh"
+          fi
+
+          if [ -z "$ENTRY" ]; then
+            echo "::error::No build.sh found in WildKernels repo."
+            echo "Check whether the repo structure has changed."
+            exit 1
+          fi
+
+          echo "entry=$ENTRY" >> "$GITHUB_OUTPUT"
+
+      - name: Build kernel
+        run: |
+          set -euo pipefail
+
+          ENTRY="${{ steps.entry.outputs.entry }}"
+          chmod +x "$ENTRY"
+
+          export DEVICE="${{ github.event.inputs.device }}"
+          export ANDROID_VERSION="${{ github.event.inputs.android_version }}"
+          export GKI_BRANCH="${{ github.event.inputs.gki_branch }}"
+          export KSU_VARIANT="${{ github.event.inputs.ksu_variant }}"
+          export ENABLE_SUSFS="${{ github.event.inputs.enable_susfs }}"
+          export ENABLE_DOCKER="${{ github.event.inputs.enable_docker }}"
+          export ENABLE_STORAGE="${{ github.event.inputs.enable_storage }}"
+
+          echo "Device: $DEVICE"
+          echo "Android: $ANDROID_VERSION"
+          echo "GKI: $GKI_BRANCH"
+          echo "KSU: $KSU_VARIANT"
+          echo "SUSFS: $ENABLE_SUSFS"
+          echo "Docker: $ENABLE_DOCKER"
+          echo "Storage: $ENABLE_STORAGE"
+
+          "$ENTRY"
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+
+          find wk -maxdepth 4 -type f \( \
+            -name '*.zip' -o \
+            -name '*AnyKernel*' -o \
+            -name '*AK3*' -o \
+            -name 'Image' -o \
+            -name '*.img' \
+          \) -exec cp -v {} out/ \; || true
+
+          if [ -z "$(ls -A out/ 2>/dev/null)" ]; then
+            echo "::warning::No kernel artifact found automatically."
+            echo "Upload will include the full build output directory if it exists."
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OnePlus_Ace5_CPH2645_KernelSU-Next_SUSFS
+          path: |
+            out/
+            wk/out/
+            wk/build/
+            wk/artifacts/
+          if-no-files-found: warn
